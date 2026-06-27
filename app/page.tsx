@@ -11,9 +11,10 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<string[]>([]);
   const [isConnected, setIsConnected] = useState(false);
+  const [viewerCount, setViewerCount] = useState(0);
 
   useEffect(() => {
-    const socket = new WebSocket("ws://localhost:8000/ws/chat/");
+    const socket = new WebSocket("ws://localhost:8000/ws/chat/room1/");
     socketRef.current = socket;
 
     socket.onopen = () => {
@@ -22,8 +23,21 @@ export default function Home() {
     };
 
     socket.onmessage = (event) => {
-      const data: ChatMessage = JSON.parse(event.data);
-      setMessages((prev) => [...prev, data.message]);
+      console.log("received", event.data);
+
+      const data = JSON.parse(event.data);
+
+      if ("message" in data) {
+        setMessages((prev) => [...prev, data.message]);
+      }
+
+      if ("viewer_count" in data) {
+        setViewerCount(data.viewer_count);
+      }
+
+      if ("count" in data) {
+        setViewerCount(data.count);
+      }
     };
 
     socket.onerror = (event) => {
@@ -63,6 +77,10 @@ export default function Home() {
 
         <p className="mb-4">
           status: {isConnected ? "connected" : "disconnected"}
+        </p>
+
+        <p className="mb-4">
+          viewers: {viewerCount}
         </p>
 
         <div className="flex gap-2 mb-6">
