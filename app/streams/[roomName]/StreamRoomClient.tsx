@@ -6,184 +6,153 @@ type Props = {
   roomName: string;
 };
 
-type ChatMessage = {
-  message: string;
-};
-
 export default function StreamRoomClient({ roomName }: Props) {
-  const [message, setMessage] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
-  const pcRef = useRef<RTCPeerConnection | null>(null);
-  const [viewerCount, setViewerCount] = useState(0);
+  const streamRef = useRef<MediaStream | null>(null);
+  const peerConnectionsRef = useRef<Record<string, RTCPeerConnection>>({});
 
-  useEffect(() => {
-    const socket = new WebSocket(
-      `ws://localhost:8000/ws/chat/${roomName}/`
-    );
+  const [isStreaming, setIsStreaming] = useState(false);
 
-    socketRef.current = socket;
+  const createOfferForViewer = async (viewerId: string) => {
+    if (!streamRef.current) return;
 
-    const pc = new RTCPeerConnection();
-    pcRef.current = pc;
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        {
+          urls: "stun:stun.l.google.com:19302",
+        },
+      ],
+    });
 
-    pc.onconnectionstatechange = () => {
-      console.log("connectionState", pc.connectionState);
-    };
+    peerConnectionsRef.current[viewerId] = pc;
 
-    pc.oniceconnectionstatechange = () => {
-      console.log("iceConnectionState", pc.iceConnectionState);
-    };
-
-    pc.ondatachannel = (event) => {
-      console.log("datachannel received", event.channel);
-    };
+    streamRef.current.getTracks().forEach((track) => {
+      pc.addTrack(track, streamRef.current!);
+    });
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         socketRef.current?.send(
           JSON.stringify({
             type: "webrtc_candidate",
+            viewer_id: viewerId,
             candidate: event.candidate,
           })
         );
-
-        console.log("candidate sent", event.candidate);
       }
+    };
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    socketRef.current?.send(
+      JSON.stringify({
+        type: "webrtc_offer",
+        viewer_id: viewerId,
+        sdp: offer,
+      })
+    );
+  };
+
+  useEffect(() => {
+    const socket = new WebSocket(
+      `ws://localhost:8000/ws/stream/${roomName}/`
+    );
+
+    socketRef.current = socket;
+
+    socket.onopen = () => {
+      socket.send(
+        JSON.stringify({
+          type: "join_streamer",
+        })
+      );
     };
 
     socket.onmessage = async (event) => {
       const data = JSON.parse(event.data);
 
-      if (data.type === "chat") {
-        setMessages((prev) => [
-          ...prev,
-          {
-            message: data.message,
-          },
-        ]);
-      }
-
-      if (data.type === "viewer_count") {
-        setViewerCount(data.count);
-      }
-
-      if (data.type === "webrtc_offer") {
-        console.log("offer received", data.sdp);
-
-        await pcRef.current?.setRemoteDescription(
-          new RTCSessionDescription(data.sdp)
-        );
-
-        const answer = await pcRef.current?.createAnswer();
-
-        await pcRef.current?.setLocalDescription(answer);
-
-        socketRef.current?.send(
-          JSON.stringify({
-            type: "webrtc_answer",
-            sdp: answer,
-          })
-        );
-
-        console.log("answer sent", answer);
+      if (data.type === "viewer_joined") {
+        await createOfferForViewer(data.viewer_id);
       }
 
       if (data.type === "webrtc_answer") {
-        console.log("answer received", data.sdp);
+        const pc = peerConnectionsRef.current[data.viewer_id];
 
-        await pcRef.current?.setRemoteDescription(
+        if (!pc) return;
+
+        await pc.setRemoteDescription(
           new RTCSessionDescription(data.sdp)
         );
       }
 
       if (data.type === "webrtc_candidate") {
-        console.log("candidate received", data.candidate);
+        const pc = peerConnectionsRef.current[data.viewer_id];
 
-        await pcRef.current?.addIceCandidate(
+        if (!pc) return;
+
+        await pc.addIceCandidate(
           new RTCIceCandidate(data.candidate)
         );
+      }
+
+      if (data.type === "viewer_left") {
+        const pc = peerConnectionsRef.current[data.viewer_id];
+
+        if (pc) {
+          pc.close();
+          delete peerConnectionsRef.current[data.viewer_id];
+        }
       }
     };
 
     return () => {
       socket.close();
-      pc.close();
+
+      Object.values(peerConnectionsRef.current).forEach((pc) => {
+        pc.close();
+      });
+
+      streamRef.current?.getTracks().forEach((track) => {
+        track.stop();
+      });
     };
   }, [roomName]);
 
-  const sendMessage = () => {
-    if (!message.trim()) return;
-    if (!socketRef.current) return;
+  const startStreaming = async () => {
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
+      audio: false,
+    });
 
-    socketRef.current.send(
-      JSON.stringify({
-        type: "chat",
-        message,
-      })
-    );
+    streamRef.current = stream;
 
-    setMessage("");
-  };
+    if (videoRef.current) {
+      videoRef.current.srcObject = stream;
+    }
 
-  const createOffer = async () => {
-    if (!pcRef.current) return;
-    if (!socketRef.current) return;
-
-    pcRef.current.createDataChannel("test");
-
-    const offer = await pcRef.current.createOffer();
-    await pcRef.current.setLocalDescription(offer);
-
-    socketRef.current.send(
-      JSON.stringify({
-        type: "webrtc_offer",
-        sdp: offer,
-      })
-    );
-
-    console.log("offer sent", offer);
+    setIsStreaming(true);
   };
 
   return (
-    <main className="min-h-screen bg-zinc-950 text-white p-8">
-      <h1 className="text-3xl font-bold mb-6">
-        Room: {roomName}
-      </h1>
-      <p className="text-zinc-400">
-        視聴者数: {viewerCount}
-      </p>
+    <main>
+      <h1>配信ルーム: {roomName}</h1>
 
-      <div className="mb-4 space-y-2">
-        {messages.map((item, index) => (
-          <div
-            key={index}
-            className="rounded bg-zinc-800 p-3"
-          >
-            {item.message}
-          </div>
-        ))}
-      </div>
+      <video
+        ref={videoRef}
+        autoPlay
+        muted
+        playsInline
+        style={{
+          width: "640px",
+          backgroundColor: "black",
+        }}
+      />
 
-      <div className="flex gap-2">
-        <input
-          value={message}
-          onChange={(e) => setMessage(e.target.value)}
-          className="flex-1 rounded bg-white px-3 py-2 text-black"
-          placeholder="メッセージを入力"
-        />
-
-        <button
-          onClick={sendMessage}
-          className="rounded bg-blue-600 px-4 py-2"
-        >
-          送信
-        </button>
-        <button
-          onClick={createOffer}
-          className="rounded bg-green-600 px-4 py-2"
-        >
-          Offer作成
+      <div>
+        <button onClick={startStreaming} disabled={isStreaming}>
+          {isStreaming ? "配信中" : "画面共有開始"}
         </button>
       </div>
     </main>
