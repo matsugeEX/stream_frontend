@@ -73,7 +73,9 @@ export default function StreamRoomClient({ roomName }: Props) {
 
     socket.onmessage = async (event) => {
       const data = JSON.parse(event.data);
-
+      if (data.type === "input_event") {
+        console.log("input_event from viewer:", data);
+    }
       if (data.type === "viewer_joined") {
         viewerIdsRef.current.add(data.viewer_id);
 

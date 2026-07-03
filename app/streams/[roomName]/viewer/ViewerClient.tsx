@@ -22,6 +22,36 @@ export default function ViewerClient({ roomName }: Props) {
 
     socketRef.current = socket;
 
+    const sendInputEvent = (key: string, state: "down" | "up") => {
+      if (!viewerIdRef.current) return;
+
+      socketRef.current?.send(
+        JSON.stringify({
+          type: "input_event",
+          viewer_id: viewerIdRef.current,
+          key,
+          state,
+        })
+      );
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+
+      if (!["w", "a", "s", "d"].includes(key)) return;
+      if (event.repeat) return;
+
+      sendInputEvent(key, "down");
+    };
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+
+      if (!["w", "a", "s", "d"].includes(key)) return;
+
+      sendInputEvent(key, "up");
+    };
+
     socket.onopen = () => {
       socket.send(
         JSON.stringify({
@@ -46,7 +76,7 @@ export default function ViewerClient({ roomName }: Props) {
         if (data.viewer_id !== viewerIdRef.current) return;
 
         peerConnectionRef.current?.close();
-        
+
         const pc = new RTCPeerConnection({
           iceServers: [
             {
@@ -93,8 +123,8 @@ export default function ViewerClient({ roomName }: Props) {
 
       if (data.type === "webrtc_candidate") {
         if (data.viewer_id !== viewerIdRef.current) return;
-        const pc = peerConnectionRef.current;
 
+        const pc = peerConnectionRef.current;
         if (!pc) return;
 
         await pc.addIceCandidate(
@@ -103,7 +133,13 @@ export default function ViewerClient({ roomName }: Props) {
       }
     };
 
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+
     return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+
       socket.close();
       peerConnectionRef.current?.close();
     };
