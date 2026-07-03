@@ -144,6 +144,31 @@ export default function ViewerClient({ roomName }: Props) {
       peerConnectionRef.current?.close();
     };
   }, [roomName]);
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key !== "ArrowUp" &&
+        event.key !== "ArrowDown" &&
+        event.key !== "ArrowLeft" &&
+        event.key !== "ArrowRight"
+      ) {
+        return;
+      }
+
+      socketRef.current?.send(
+        JSON.stringify({
+          type: "input_event",
+          key: event.key,
+        })
+      );
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
 
   return (
     <main>
