@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useVisualLatency } from "./useVisualLatency";
 
 type Props = {
   roomName: string;
@@ -15,42 +16,15 @@ export default function ViewerClient({ roomName }: Props) {
   const [viewerId, setViewerId] = useState("");
   const [viewerCount, setViewerCount] = useState(0);
 
+  const { measureCanvasRef, latencyMs, markInputTime } =
+    useVisualLatency(videoRef);
+
   useEffect(() => {
     const socket = new WebSocket(
       `ws://localhost:8000/ws/stream/${roomName}/`
     );
 
     socketRef.current = socket;
-
-    const sendInputEvent = (key: string, state: "down" | "up") => {
-      if (!viewerIdRef.current) return;
-
-      socketRef.current?.send(
-        JSON.stringify({
-          type: "input_event",
-          viewer_id: viewerIdRef.current,
-          key,
-          state,
-        })
-      );
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const key = event.key.toLowerCase();
-
-      if (!["w", "a", "s", "d"].includes(key)) return;
-      if (event.repeat) return;
-
-      sendInputEvent(key, "down");
-    };
-
-    const handleKeyUp = (event: KeyboardEvent) => {
-      const key = event.key.toLowerCase();
-
-      if (!["w", "a", "s", "d"].includes(key)) return;
-
-      sendInputEvent(key, "up");
-    };
 
     socket.onopen = () => {
       socket.send(
@@ -133,17 +107,12 @@ export default function ViewerClient({ roomName }: Props) {
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("keyup", handleKeyUp);
-
     return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("keyup", handleKeyUp);
-
       socket.close();
       peerConnectionRef.current?.close();
     };
   }, [roomName]);
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (
@@ -154,6 +123,8 @@ export default function ViewerClient({ roomName }: Props) {
       ) {
         return;
       }
+
+      markInputTime();
 
       socketRef.current?.send(
         JSON.stringify({
@@ -168,7 +139,7 @@ export default function ViewerClient({ roomName }: Props) {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, []);
+  }, [markInputTime]);
 
   return (
     <main>
@@ -186,6 +157,18 @@ export default function ViewerClient({ roomName }: Props) {
           width: "640px",
           backgroundColor: "black",
         }}
+      />
+
+      <p>
+        visual latency:{" "}
+        {latencyMs === null ? "not measured" : `${latencyMs} ms`}
+      </p>
+
+      <canvas
+        ref={measureCanvasRef}
+        width={640}
+        height={360}
+        style={{ display: "none" }}
       />
     </main>
   );
