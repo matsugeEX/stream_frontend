@@ -13,6 +13,7 @@ export default function StreamRoomClient({ roomName }: Props) {
   const peerConnectionsRef = useRef<Record<string, RTCPeerConnection>>({});
 
   const [isStreaming, setIsStreaming] = useState(false);
+  const viewerIdsRef = useRef<Set<string>>(new Set());
 
   const createOfferForViewer = async (viewerId: string) => {
     if (!streamRef.current) return;
@@ -74,7 +75,11 @@ export default function StreamRoomClient({ roomName }: Props) {
       const data = JSON.parse(event.data);
 
       if (data.type === "viewer_joined") {
-        await createOfferForViewer(data.viewer_id);
+        viewerIdsRef.current.add(data.viewer_id);
+
+        if (streamRef.current) {
+          await createOfferForViewer(data.viewer_id);
+        }
       }
 
       if (data.type === "webrtc_answer") {
@@ -98,15 +103,16 @@ export default function StreamRoomClient({ roomName }: Props) {
       }
 
       if (data.type === "viewer_left") {
+        viewerIdsRef.current.delete(data.viewer_id);
+
         const pc = peerConnectionsRef.current[data.viewer_id];
 
         if (pc) {
           pc.close();
           delete peerConnectionsRef.current[data.viewer_id];
         }
-      }
-    };
-
+      };
+    }
     return () => {
       socket.close();
 
@@ -133,6 +139,10 @@ export default function StreamRoomClient({ roomName }: Props) {
     }
 
     setIsStreaming(true);
+
+    for (const viewerId of viewerIdsRef.current) {
+      await createOfferForViewer(viewerId);
+    }
   };
 
   return (

@@ -43,6 +43,10 @@ export default function ViewerClient({ roomName }: Props) {
       }
 
       if (data.type === "webrtc_offer") {
+        if (data.viewer_id !== viewerIdRef.current) return;
+
+        peerConnectionRef.current?.close();
+        
         const pc = new RTCPeerConnection({
           iceServers: [
             {
@@ -88,6 +92,7 @@ export default function ViewerClient({ roomName }: Props) {
       }
 
       if (data.type === "webrtc_candidate") {
+        if (data.viewer_id !== viewerIdRef.current) return;
         const pc = peerConnectionRef.current;
 
         if (!pc) return;
