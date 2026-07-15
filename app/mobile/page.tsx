@@ -5,127 +5,358 @@ import { useEffect, useRef, useState } from "react";
 export default function MobilePage() {
   const roomName = "test";
 
-  const API_BASE = "http://192.168.1.5:8010";
-
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
-  const viewerIdRef = useRef<string>("");
+  const viewerIdRef = useRef("");
 
   const leftStickRef = useRef<HTMLDivElement | null>(null);
   const leftTouchIdRef = useRef<number | null>(null);
   const lookTouchIdRef = useRef<number | null>(null);
 
-  const stickCenterRef = useRef({ x: 0, y: 0 });
-  const lastLookRef = useRef({ x: 0, y: 0 });
+  const stickCenterRef = useRef({
+    x: 0,
+    y: 0,
+  });
+
+  const lastLookRef = useRef({
+    x: 0,
+    y: 0,
+  });
+
+  const pendingMouseRef = useRef({
+    dx: 0,
+    dy: 0,
+  });
+
+  const mouseFrameRef = useRef<number | null>(null);
   const activeKeysRef = useRef<Set<string>>(new Set());
 
   const [viewerId, setViewerId] = useState("");
   const [viewerCount, setViewerCount] = useState(0);
   const [logs, setLogs] = useState<string[]>([]);
 
+  const getApiBase = () => {
+    return `http://${window.location.hostname}:8010`;
+  };
+
   const addLog = (message: string) => {
     console.log(message);
-    setLogs((prev) => [message, ...prev].slice(0, 10));
+    setLogs((previous) => [message, ...previous].slice(0, 8));
   };
 
   const focusGame = async () => {
     addLog("focus game");
-
     try {
-      const response = await fetch(`${API_BASE}/focus`, {
+      const response = await fetch(`${getApiBase()}/focus`, {
         method: "POST",
       });
 
-      addLog(`focus response ${response.status}`);
+      const result = await response.json();
+
+      addLog(`focus: ${result.status}`);
     } catch (error) {
       console.error("focus failed:", error);
       addLog("focus failed");
     }
   };
 
+  const sendKey = async (
+    key: string,
+    action: "down" | "up"
+  ) => {
+    try {
+      const response = await fetch(`${getApiBase()}/input`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          key,
+          action,
+        }),
+      });
+
+      if (!response.ok) {
+        addLog(`key error: ${response.status}`);
+      }
+    } catch (error) {
+      console.error("sendKey failed:", error);
+      addLog("key fetch failed");
+    }
+  };
+
+  const sendMouseMove = async (
+    dx: number,
+    dy: number
+  ) => {
+    if (dx === 0 && dy === 0) {
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `${getApiBase()}/mouse-move`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            dx,
+            dy,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        addLog(`mouse error: ${response.status}`);
+      }
+    } catch (error) {
+      console.error("sendMouseMove failed:", error);
+      addLog("mouse move failed");
+    }
+  };
+
+  const scheduleMouseMove = (
+    dx: number,
+    dy: number
+  ) => {
+    pendingMouseRef.current.dx += dx;
+    pendingMouseRef.current.dy += dy;
+
+    if (mouseFrameRef.current !== null) {
+      return;
+    }
+
+    mouseFrameRef.current = requestAnimationFrame(() => {
+      const movement = pendingMouseRef.current;
+
+      pendingMouseRef.current = {
+        dx: 0,
+        dy: 0,
+      };
+
+      mouseFrameRef.current = null;
+
+      // 視点感度
+      const sensitivity = 1.8;
+
+      const sendDx = Math.round(
+        movement.dx * sensitivity
+      );
+
+      const sendDy = Math.round(
+        movement.dy * sensitivity
+      );
+
+      void sendMouseMove(sendDx, sendDy);
+    });
+  };
+
+  const updateMovement = (
+    dx: number,
+    dy: number
+  ) => {
+    const threshold = 25;
+    const nextKeys = new Set<string>();
+
+    if (dy < -threshold) {
+      nextKeys.add("w");
+    }
+
+    if (dy > threshold) {
+      nextKeys.add("s");
+    }
+
+    if (dx < -threshold) {
+      nextKeys.add("a");
+    }
+
+    if (dx > threshold) {
+      nextKeys.add("d");
+    }
+
+    for (const key of activeKeysRef.current) {
+      if (!nextKeys.has(key)) {
+        void sendKey(key, "up");
+      }
+    }
+
+    for (const key of nextKeys) {
+      if (!activeKeysRef.current.has(key)) {
+        void sendKey(key, "down");
+      }
+    }
+
+    activeKeysRef.current = nextKeys;
+  };
+
+  const stopMovement = () => {
+    for (const key of activeKeysRef.current) {
+      void sendKey(key, "up");
+    }
+
+    activeKeysRef.current.clear();
+  };
+
+  const releaseAllInputs = () => {
+    stopMovement();
+
+    void sendKey("Shift", "up");
+    void sendKey(" ", "up");
+
+    fetch(`${getApiBase()}/release-all`, {
+      method: "POST",
+    }).catch((error) => {
+      console.error("release all failed:", error);
+    });
+  };
+
   useEffect(() => {
     const wsBase = `ws://${window.location.hostname}:8000`;
-    const socket = new WebSocket(`${wsBase}/ws/stream/${roomName}/`);
+    const socket = new WebSocket(
+      `${wsBase}/ws/stream/${roomName}/`
+    );
 
     socketRef.current = socket;
 
     socket.onopen = () => {
       addLog("websocket open");
-      socket.send(JSON.stringify({ type: "join_viewer" }));
+
+      socket.send(
+        JSON.stringify({
+          type: "join_viewer",
+        })
+      );
     };
 
     socket.onmessage = async (event) => {
-      const data = JSON.parse(event.data);
+      try {
+        const data = JSON.parse(event.data);
 
-      if (data.type === "joined_as_viewer") {
-        setViewerId(data.viewer_id);
-        viewerIdRef.current = data.viewer_id;
-        addLog("joined as viewer");
-      }
+        if (data.type === "joined_as_viewer") {
+          setViewerId(data.viewer_id);
+          viewerIdRef.current = data.viewer_id;
+          addLog("joined as viewer");
+        }
 
-      if (data.type === "viewer_count") {
-        setViewerCount(data.count);
-      }
+        if (data.type === "viewer_count") {
+          setViewerCount(data.count);
+        }
 
-      if (data.type === "webrtc_offer") {
-        if (data.viewer_id !== viewerIdRef.current) return;
-
-        peerConnectionRef.current?.close();
-
-        const pc = new RTCPeerConnection({
-          iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-        });
-
-        peerConnectionRef.current = pc;
-
-        pc.ontrack = (event) => {
-          addLog("video track received");
-
-          if (videoRef.current) {
-            videoRef.current.srcObject = event.streams[0];
-            videoRef.current.play().catch((error) => {
-              console.error("video play failed:", error);
-              addLog("video play failed");
-            });
+        if (data.type === "webrtc_offer") {
+          if (
+            data.viewer_id !== viewerIdRef.current
+          ) {
+            return;
           }
-        };
 
-        pc.onicecandidate = (event) => {
-          if (event.candidate) {
+          peerConnectionRef.current?.close();
+
+          const peerConnection =
+            new RTCPeerConnection({
+              iceServers: [
+                {
+                  urls: "stun:stun.l.google.com:19302",
+                },
+              ],
+            });
+
+          peerConnectionRef.current =
+            peerConnection;
+
+          peerConnection.ontrack = (trackEvent) => {
+            addLog("video track received");
+
+            if (!videoRef.current) {
+              return;
+            }
+
+            videoRef.current.srcObject =
+              trackEvent.streams[0];
+
+            videoRef.current
+              .play()
+              .catch((error) => {
+                console.error(
+                  "video play failed:",
+                  error
+                );
+
+                addLog("video play failed");
+              });
+          };
+
+          peerConnection.onicecandidate = (
+            candidateEvent
+          ) => {
+            if (!candidateEvent.candidate) {
+              return;
+            }
+
             socketRef.current?.send(
               JSON.stringify({
                 type: "webrtc_candidate",
-                viewer_id: viewerIdRef.current,
-                candidate: event.candidate,
+                viewer_id:
+                  viewerIdRef.current,
+                candidate:
+                  candidateEvent.candidate,
               })
             );
+          };
+
+          await peerConnection.setRemoteDescription(
+            new RTCSessionDescription(data.sdp)
+          );
+
+          const answer =
+            await peerConnection.createAnswer();
+
+          await peerConnection.setLocalDescription(
+            answer
+          );
+
+          socketRef.current?.send(
+            JSON.stringify({
+              type: "webrtc_answer",
+              viewer_id: viewerIdRef.current,
+              sdp: answer,
+            })
+          );
+
+          addLog("webrtc answer sent");
+        }
+
+        if (
+          data.type === "webrtc_candidate"
+        ) {
+          if (
+            data.viewer_id !== viewerIdRef.current
+          ) {
+            return;
           }
-        };
 
-        await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+          const peerConnection =
+            peerConnectionRef.current;
 
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
+          if (!peerConnection) {
+            return;
+          }
 
-        socketRef.current?.send(
-          JSON.stringify({
-            type: "webrtc_answer",
-            viewer_id: viewerIdRef.current,
-            sdp: answer,
-          })
+          await peerConnection.addIceCandidate(
+            new RTCIceCandidate(
+              data.candidate
+            )
+          );
+        }
+      } catch (error) {
+        console.error(
+          "websocket message failed:",
+          error
         );
 
-        addLog("webrtc answer sent");
-      }
-
-      if (data.type === "webrtc_candidate") {
-        if (data.viewer_id !== viewerIdRef.current) return;
-
-        const pc = peerConnectionRef.current;
-        if (!pc) return;
-
-        await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        addLog("message error");
       }
     };
 
@@ -137,102 +368,52 @@ export default function MobilePage() {
       addLog("websocket closed");
     };
 
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        releaseAllInputs();
+      }
+    };
+
+    const handlePageHide = () => {
+      releaseAllInputs();
+    };
+
+    document.addEventListener(
+      "visibilitychange",
+      handleVisibilityChange
+    );
+
+    window.addEventListener(
+      "pagehide",
+      handlePageHide
+    );
+
     return () => {
+      releaseAllInputs();
+
+      document.removeEventListener(
+        "visibilitychange",
+        handleVisibilityChange
+      );
+
+      window.removeEventListener(
+        "pagehide",
+        handlePageHide
+      );
+
       socket.close();
       peerConnectionRef.current?.close();
+
+      if (mouseFrameRef.current !== null) {
+        cancelAnimationFrame(
+          mouseFrameRef.current
+        );
+      }
     };
   }, []);
 
-  const sendKey = async (key: string, action: "down" | "up") => {
-    addLog(`key ${key} ${action}`);
-
-    try {
-      const response = await fetch(`${API_BASE}/input`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ key, action }),
-      });
-
-      addLog(`key response ${response.status}`);
-    } catch (error) {
-      console.error("sendKey failed:", error);
-      addLog("key fetch failed");
-    }
-  };
-
-  const sendMouseMove = async (dx: number, dy: number) => {
-    try {
-      await fetch(`${API_BASE}/mouse-move`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ dx, dy }),
-      });
-    } catch (error) {
-      console.error("sendMouseMove failed:", error);
-      addLog("mouse move failed");
-    }
-  };
-
-  const sendMouseButton = async (
-    button: "left" | "right",
-    action: "down" | "up"
-  ) => {
-    addLog(`mouse ${button} ${action}`);
-
-    try {
-      const response = await fetch(`${API_BASE}/mouse-button`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ button, action }),
-      });
-
-      addLog(`mouse button response ${response.status}`);
-    } catch (error) {
-      console.error("sendMouseButton failed:", error);
-      addLog("mouse button failed");
-    }
-  };
-
-  const updateMovement = async (dx: number, dy: number) => {
-    const threshold = 25;
-    const nextKeys = new Set<string>();
-
-    if (dy < -threshold) nextKeys.add("w");
-    if (dy > threshold) nextKeys.add("s");
-    if (dx < -threshold) nextKeys.add("a");
-    if (dx > threshold) nextKeys.add("d");
-
-    for (const key of activeKeysRef.current) {
-      if (!nextKeys.has(key)) {
-        await sendKey(key, "up");
-      }
-    }
-
-    for (const key of nextKeys) {
-      if (!activeKeysRef.current.has(key)) {
-        await sendKey(key, "down");
-      }
-    }
-
-    activeKeysRef.current = nextKeys;
-  };
-
-  const stopMovement = async () => {
-    for (const key of activeKeysRef.current) {
-      await sendKey(key, "up");
-    }
-
-    activeKeysRef.current.clear();
-  };
-
   return (
-    <main className="fixed inset-0 overflow-hidden bg-black text-white select-none touch-none">
+    <main className="fixed inset-0 select-none overflow-hidden bg-black text-white touch-none">
       <video
         ref={videoRef}
         autoPlay
@@ -242,69 +423,100 @@ export default function MobilePage() {
       />
 
       <div className="absolute left-3 top-3 z-30 rounded bg-black/60 px-3 py-1 text-xs">
-        room: {roomName} / viewers: {viewerCount} /{" "}
-        {viewerId ? "connected" : "connecting..."}
+        room: {roomName} / viewers:{" "}
+        {viewerCount} /{" "}
+        {viewerId
+          ? "connected"
+          : "connecting..."}
       </div>
 
       <div className="absolute left-3 top-12 z-30 max-w-[90vw] rounded bg-black/70 px-3 py-2 text-xs">
         {logs.map((log, index) => (
-          <div key={index}>{log}</div>
+          <div key={`${log}-${index}`}>
+            {log}
+          </div>
         ))}
       </div>
 
       <button
-        className="absolute left-3 top-40 z-30 rounded bg-white px-4 py-2 text-sm text-black"
+        type="button"
+        className="absolute left-3 top-36 z-30 rounded bg-white px-4 py-2 text-sm text-black"
         onClick={focusGame}
       >
         Focus Game
       </button>
 
       <div className="absolute inset-0 z-20 flex">
+        {/* 左半分：移動 */}
         <div className="relative h-full w-1/2">
           <div
             ref={leftStickRef}
             className="absolute bottom-10 left-10 h-40 w-40 rounded-full border-4 border-white/30 bg-white/10"
-            onTouchStart={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
+            onTouchStart={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
 
-              addLog("left stick start");
+              const touch =
+                event.changedTouches[0];
 
-              const touch = e.changedTouches[0];
-              leftTouchIdRef.current = touch.identifier;
+              leftTouchIdRef.current =
+                touch.identifier;
 
-              const rect = leftStickRef.current!.getBoundingClientRect();
+              const rectangle =
+                leftStickRef.current?.getBoundingClientRect();
+
+              if (!rectangle) {
+                return;
+              }
+
               stickCenterRef.current = {
-                x: rect.left + rect.width / 2,
-                y: rect.top + rect.height / 2,
+                x:
+                  rectangle.left +
+                  rectangle.width / 2,
+                y:
+                  rectangle.top +
+                  rectangle.height / 2,
               };
-            }}
-            onTouchMove={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
 
-              for (const touch of Array.from(e.changedTouches)) {
-                if (touch.identifier === leftTouchIdRef.current) {
-                  const dx = touch.clientX - stickCenterRef.current.x;
-                  const dy = touch.clientY - stickCenterRef.current.y;
-                  updateMovement(dx, dy);
+              updateMovement(
+                touch.clientX -
+                  stickCenterRef.current.x,
+                touch.clientY -
+                  stickCenterRef.current.y
+              );
+            }}
+            onTouchMove={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+
+              for (const touch of Array.from(
+                event.changedTouches
+              )) {
+                if (
+                  touch.identifier !==
+                  leftTouchIdRef.current
+                ) {
+                  continue;
                 }
+
+                updateMovement(
+                  touch.clientX -
+                    stickCenterRef.current.x,
+                  touch.clientY -
+                    stickCenterRef.current.y
+                );
               }
             }}
-            onTouchEnd={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-
-              addLog("left stick end");
+            onTouchEnd={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
 
               leftTouchIdRef.current = null;
               stopMovement();
             }}
-            onTouchCancel={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-
-              addLog("left stick cancel");
+            onTouchCancel={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
 
               leftTouchIdRef.current = null;
               stopMovement();
@@ -314,111 +526,116 @@ export default function MobilePage() {
           </div>
         </div>
 
+        {/* 右半分：視点操作 */}
         <div
           className="relative h-full w-1/2"
-          onTouchStart={(e) => {
-            e.preventDefault();
+          onTouchStart={(event) => {
+            event.preventDefault();
 
-            addLog("look start");
+            const touch =
+              event.changedTouches[0];
 
-            const touch = e.changedTouches[0];
-            lookTouchIdRef.current = touch.identifier;
+            lookTouchIdRef.current =
+              touch.identifier;
 
             lastLookRef.current = {
               x: touch.clientX,
               y: touch.clientY,
             };
           }}
-          onTouchMove={(e) => {
-            e.preventDefault();
+          onTouchMove={(event) => {
+            event.preventDefault();
 
-            for (const touch of Array.from(e.changedTouches)) {
-              if (touch.identifier === lookTouchIdRef.current) {
-                const dx = touch.clientX - lastLookRef.current.x;
-                const dy = touch.clientY - lastLookRef.current.y;
-
-                lastLookRef.current = {
-                  x: touch.clientX,
-                  y: touch.clientY,
-                };
-
-                sendMouseMove(dx * 2, dy * 2);
+            for (const touch of Array.from(
+              event.changedTouches
+            )) {
+              if (
+                touch.identifier !==
+                lookTouchIdRef.current
+              ) {
+                continue;
               }
+
+              const dx =
+                touch.clientX -
+                lastLookRef.current.x;
+
+              const dy =
+                touch.clientY -
+                lastLookRef.current.y;
+
+              lastLookRef.current = {
+                x: touch.clientX,
+                y: touch.clientY,
+              };
+
+              scheduleMouseMove(dx, dy);
             }
           }}
-          onTouchEnd={(e) => {
-            e.preventDefault();
-            addLog("look end");
+          onTouchEnd={(event) => {
+            event.preventDefault();
             lookTouchIdRef.current = null;
           }}
-          onTouchCancel={(e) => {
-            e.preventDefault();
-            addLog("look cancel");
+          onTouchCancel={(event) => {
+            event.preventDefault();
             lookTouchIdRef.current = null;
           }}
         >
+          <div className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 rounded bg-black/40 px-2 py-1 text-xs text-white/60">
+            Swipe to look
+          </div>
+
           <button
-            className="absolute bottom-10 right-10 h-20 w-20 rounded-full border border-white/40 bg-white/20 active:bg-white/50"
-            onTouchStart={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              sendKey(" ", "down");
+            type="button"
+            className="absolute bottom-10 right-8 h-20 w-20 rounded-full border border-white/40 bg-white/20 active:bg-white/50"
+            onTouchStart={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+
+              void sendKey(" ", "down");
             }}
-            onTouchEnd={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              sendKey(" ", "up");
+            onTouchEnd={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+
+              void sendKey(" ", "up");
+            }}
+            onTouchCancel={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+
+              void sendKey(" ", "up");
             }}
           >
             Jump
           </button>
 
           <button
-            className="absolute bottom-24 right-36 h-20 w-20 rounded-full border border-white/40 bg-white/20 active:bg-white/50"
-            onTouchStart={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              sendKey("Shift", "down");
+            type="button"
+            className="absolute bottom-10 right-32 h-20 w-20 rounded-full border border-white/40 bg-white/20 active:bg-white/50"
+            onTouchStart={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+
+              void sendKey(
+                "Shift",
+                "down"
+              );
             }}
-            onTouchEnd={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              sendKey("Shift", "up");
+            onTouchEnd={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+
+              void sendKey("Shift", "up");
+            }}
+            onTouchCancel={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+
+              void sendKey("Shift", "up");
             }}
           >
             Shift
-          </button>
-
-          <button
-            className="absolute bottom-2 right-36 h-20 w-20 rounded-full border border-white/40 bg-white/20 active:bg-white/50"
-            onTouchStart={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              sendMouseButton("left", "down");
-            }}
-            onTouchEnd={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              sendMouseButton("left", "up");
-            }}
-          >
-            Attack
-          </button>
-
-          <button
-            className="absolute bottom-12 right-60 h-20 w-20 rounded-full border border-white/40 bg-white/20 active:bg-white/50"
-            onTouchStart={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              sendMouseButton("right", "down");
-            }}
-            onTouchEnd={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              sendMouseButton("right", "up");
-            }}
-          >
-            Aim
           </button>
         </div>
       </div>
