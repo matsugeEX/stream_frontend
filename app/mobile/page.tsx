@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 
-type WebSocketMessage = {
+type SocketMessage = {
   type: string;
   viewer_id?: string;
   viewer_count?: number;
@@ -36,6 +36,9 @@ export default function MobilePage() {
   const videoRef =
     useRef<HTMLVideoElement | null>(null);
 
+  const latencyCanvasRef =
+    useRef<HTMLCanvasElement | null>(null);
+
   const socketRef =
     useRef<WebSocket | null>(null);
 
@@ -45,7 +48,7 @@ export default function MobilePage() {
   const viewerIdRef = useRef("");
 
   const pendingOfferRef =
-    useRef<WebSocketMessage | null>(null);
+    useRef<SocketMessage | null>(null);
 
   const pendingCandidatesRef =
     useRef<RTCIceCandidateInit[]>([]);
@@ -68,13 +71,21 @@ export default function MobilePage() {
   const previousLookPointRef =
     useRef<Point | null>(null);
 
-  const mouseDeltaRef =
-    useRef({
-      dx: 0,
-      dy: 0,
-    });
+  const mouseDeltaRef = useRef({
+    dx: 0,
+    dy: 0,
+  });
 
   const mouseAnimationFrameRef =
+    useRef<number | null>(null);
+
+  const visualLatencyStartedAtRef =
+    useRef<number | null>(null);
+
+  const visualLatencyFrameRef =
+    useRef<number | null>(null);
+
+  const markerBaselineRef =
     useRef<number | null>(null);
 
   const [viewerId, setViewerId] =
@@ -104,6 +115,14 @@ export default function MobilePage() {
   const [averageRtt, setAverageRtt] =
     useState<number | null>(null);
 
+  const [visualLatency, setVisualLatency] =
+    useState<number | null>(null);
+
+  const [
+    isMeasuringVisualLatency,
+    setIsMeasuringVisualLatency,
+  ] = useState(false);
+
   const rttHistoryRef =
     useRef<number[]>([]);
 
@@ -112,48 +131,11 @@ export default function MobilePage() {
       console.log(message);
 
       setLogs((currentLogs) => {
-        const nextLogs = [
+        return [
           ...currentLogs,
           message,
-        ];
-
-        return nextLogs.slice(-10);
+        ].slice(-12);
       });
-    },
-    []
-  );
-
-  const recordLatency = useCallback(
-    (
-      value: number,
-      type: "key" | "mouse"
-    ) => {
-      const roundedValue =
-        Math.round(value * 10) / 10;
-
-      if (type === "key") {
-        setKeyRtt(roundedValue);
-      } else {
-        setMouseRtt(roundedValue);
-      }
-
-      const history = [
-        ...rttHistoryRef.current,
-        value,
-      ].slice(-30);
-
-      rttHistoryRef.current = history;
-
-      const average =
-        history.reduce(
-          (total, current) =>
-            total + current,
-          0
-        ) / history.length;
-
-      setAverageRtt(
-        Math.round(average * 10) / 10
-      );
     },
     []
   );
@@ -162,13 +144,47 @@ export default function MobilePage() {
     return `http://${window.location.hostname}:8010`;
   }, []);
 
+  const recordLatency = useCallback(
+    (
+      latency: number,
+      type: "key" | "mouse"
+    ) => {
+      const rounded =
+        Math.round(latency * 10) / 10;
+
+      if (type === "key") {
+        setKeyRtt(rounded);
+      } else {
+        setMouseRtt(rounded);
+      }
+
+      const history = [
+        ...rttHistoryRef.current,
+        latency,
+      ].slice(-30);
+
+      rttHistoryRef.current = history;
+
+      const total = history.reduce(
+        (sum, value) => sum + value,
+        0
+      );
+
+      setAverageRtt(
+        Math.round(
+          (total / history.length) * 10
+        ) / 10
+      );
+    },
+    []
+  );
+
   const sendKey = useCallback(
     async (
       key: string,
-      action: "down" | "up"
+      action: "down" | "up" | "press"
     ) => {
-      const startedAt =
-        performance.now();
+      const startedAt = performance.now();
 
       try {
         const response = await fetch(
@@ -192,7 +208,7 @@ export default function MobilePage() {
           );
         }
 
-        const data =
+        const result =
           (await response.json()) as InputResponse;
 
         const rtt =
@@ -200,12 +216,12 @@ export default function MobilePage() {
 
         recordLatency(rtt, "key");
 
-        console.log("key input:", {
+        console.log("key input", {
           key,
           action,
           rtt,
-          processing_ms:
-            data.processing_ms,
+          processingMs:
+            result.processing_ms,
         });
       } catch (error) {
         console.error(
@@ -214,7 +230,7 @@ export default function MobilePage() {
         );
 
         addLog(
-          `キー送信失敗: ${key} ${action}`
+          `キー送信失敗: ${key}`
         );
       }
     },
@@ -225,72 +241,66 @@ export default function MobilePage() {
     ]
   );
 
-  const sendMouseMove =
-    useCallback(
-      async (
-        dx: number,
-        dy: number
-      ) => {
-        if (dx === 0 && dy === 0) {
-          return;
-        }
+  const sendMouseMove = useCallback(
+    async (
+      dx: number,
+      dy: number
+    ) => {
+      if (dx === 0 && dy === 0) {
+        return;
+      }
 
-        const startedAt =
-          performance.now();
+      const startedAt = performance.now();
 
-        try {
-          const response = await fetch(
-            `${getApiBase()}/mouse-move`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type":
-                  "application/json",
-              },
-              body: JSON.stringify({
-                dx,
-                dy,
-              }),
-            }
-          );
-
-          if (!response.ok) {
-            throw new Error(
-              `HTTP ${response.status}`
-            );
+      try {
+        const response = await fetch(
+          `${getApiBase()}/mouse-move`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              dx,
+              dy,
+            }),
           }
+        );
 
-          const data =
-            (await response.json()) as InputResponse;
-
-          const rtt =
-            performance.now() -
-            startedAt;
-
-          recordLatency(
-            rtt,
-            "mouse"
-          );
-
-          console.log("mouse move:", {
-            dx,
-            dy,
-            rtt,
-            processing_ms:
-              data.processing_ms,
-          });
-        } catch (error) {
-          console.error(
-            "mouse move failed:",
-            error
+        if (!response.ok) {
+          throw new Error(
+            `HTTP ${response.status}`
           );
         }
-      },
-      [
-        getApiBase,
-        recordLatency,
-      ]
-    );
+
+        const result =
+          (await response.json()) as InputResponse;
+
+        const rtt =
+          performance.now() - startedAt;
+
+        recordLatency(rtt, "mouse");
+
+        console.log("mouse input", {
+          dx,
+          dy,
+          rtt,
+          processingMs:
+            result.processing_ms,
+        });
+      } catch (error) {
+        console.error(
+          "mouse input failed:",
+          error
+        );
+      }
+    },
+    [
+      getApiBase,
+      recordLatency,
+    ]
+  );
 
   const flushMouseMovement =
     useCallback(() => {
@@ -320,11 +330,8 @@ export default function MobilePage() {
         dx: number,
         dy: number
       ) => {
-        mouseDeltaRef.current.dx +=
-          dx;
-
-        mouseDeltaRef.current.dy +=
-          dy;
+        mouseDeltaRef.current.dx += dx;
+        mouseDeltaRef.current.dy += dy;
 
         if (
           mouseAnimationFrameRef.current !==
@@ -334,43 +341,42 @@ export default function MobilePage() {
         }
 
         mouseAnimationFrameRef.current =
-          window.requestAnimationFrame(
+          requestAnimationFrame(
             flushMouseMovement
           );
       },
       [flushMouseMovement]
     );
 
-  const focusGame =
-    useCallback(async () => {
-      try {
-        const response = await fetch(
-          `${getApiBase()}/focus`,
-          {
-            method: "POST",
-          }
-        );
-
-        if (!response.ok) {
-          throw new Error(
-            `HTTP ${response.status}`
-          );
+  const focusGame = useCallback(async () => {
+    try {
+      const response = await fetch(
+        `${getApiBase()}/focus`,
+        {
+          method: "POST",
         }
+      );
 
-        addLog(
-          "UE5ウィンドウをフォーカスしました"
-        );
-      } catch (error) {
-        console.error(
-          "focus failed:",
-          error
-        );
-
-        addLog(
-          "UE5のフォーカスに失敗しました"
+      if (!response.ok) {
+        throw new Error(
+          `HTTP ${response.status}`
         );
       }
-    }, [addLog, getApiBase]);
+
+      addLog(
+        "UE5をフォーカスしました"
+      );
+    } catch (error) {
+      console.error(
+        "focus failed:",
+        error
+      );
+
+      addLog(
+        "UE5のフォーカスに失敗しました"
+      );
+    }
+  }, [addLog, getApiBase]);
 
   const releaseAllKeys =
     useCallback(async () => {
@@ -391,18 +397,282 @@ export default function MobilePage() {
       }
     }, [getApiBase]);
 
+  const stopVisualLatencyDetection =
+    useCallback(() => {
+      if (
+        visualLatencyFrameRef.current !==
+        null
+      ) {
+        cancelAnimationFrame(
+          visualLatencyFrameRef.current
+        );
+
+        visualLatencyFrameRef.current =
+          null;
+      }
+
+      visualLatencyStartedAtRef.current =
+        null;
+
+      markerBaselineRef.current = null;
+
+      setIsMeasuringVisualLatency(false);
+    }, []);
+
+  const readMarkerBrightness =
+    useCallback((): number | null => {
+      const video = videoRef.current;
+      const canvas =
+        latencyCanvasRef.current;
+
+      if (!video || !canvas) {
+        return null;
+      }
+
+      if (
+        video.readyState <
+          HTMLMediaElement.HAVE_CURRENT_DATA ||
+        video.videoWidth === 0 ||
+        video.videoHeight === 0
+      ) {
+        return null;
+      }
+
+      const context = canvas.getContext(
+        "2d",
+        {
+          willReadFrequently: true,
+        }
+      );
+
+      if (!context) {
+        return null;
+      }
+
+      /*
+       * Windows画面左上の約180×180pxを監視。
+       * マーカーは画面左上から20pxの位置にある。
+       */
+      const sourceWidth = Math.min(
+        180,
+        video.videoWidth
+      );
+
+      const sourceHeight = Math.min(
+        180,
+        video.videoHeight
+      );
+
+      context.drawImage(
+        video,
+        0,
+        0,
+        sourceWidth,
+        sourceHeight,
+        0,
+        0,
+        canvas.width,
+        canvas.height
+      );
+
+      const imageData =
+        context.getImageData(
+          0,
+          0,
+          canvas.width,
+          canvas.height
+        );
+
+      let brightnessTotal = 0;
+      let pixelCount = 0;
+
+      for (
+        let index = 0;
+        index < imageData.data.length;
+        index += 4
+      ) {
+        const red =
+          imageData.data[index];
+
+        const green =
+          imageData.data[index + 1];
+
+        const blue =
+          imageData.data[index + 2];
+
+        brightnessTotal +=
+          (red + green + blue) / 3;
+
+        pixelCount += 1;
+      }
+
+      if (pixelCount === 0) {
+        return null;
+      }
+
+      return brightnessTotal / pixelCount;
+    },
+    []
+  );
+
+  const detectVisualLatency = useCallback(
+    function detectVisualLatencyFrame() {
+      const startedAt =
+        visualLatencyStartedAtRef.current;
+
+      if (startedAt === null) {
+        stopVisualLatencyDetection();
+        return;
+      }
+
+      const brightness =
+        readMarkerBrightness();
+
+      const baseline =
+        markerBaselineRef.current;
+
+      if (
+        brightness !== null &&
+        baseline !== null
+      ) {
+        const increase =
+          brightness - baseline;
+
+        /*
+        * マーカーが黒から白へ変わった場合、
+        * 基準値より明るさが大きく上昇します。
+        */
+        if (increase > 45) {
+          const latency =
+            performance.now() - startedAt;
+
+          const rounded =
+            Math.round(latency * 10) / 10;
+
+          setVisualLatency(rounded);
+
+          addLog(
+            `Visual Latency: ${rounded} ms`
+          );
+
+          stopVisualLatencyDetection();
+          return;
+        }
+      }
+
+      /*
+      * 5秒経過しても検出できなければ終了します。
+      */
+      if (
+        performance.now() - startedAt >
+        5000
+      ) {
+        addLog(
+          "映像マーカーを検出できませんでした"
+        );
+
+        stopVisualLatencyDetection();
+        return;
+      }
+
+      visualLatencyFrameRef.current =
+        requestAnimationFrame(
+          detectVisualLatencyFrame
+        );
+    },
+    [
+      addLog,
+      readMarkerBrightness,
+      stopVisualLatencyDetection,
+    ]
+  );
+
+  const measureVisualLatency =
+    useCallback(async () => {
+      if (isMeasuringVisualLatency) {
+        return;
+      }
+
+      const video = videoRef.current;
+
+      if (
+        !video ||
+        video.readyState <
+          HTMLMediaElement.HAVE_CURRENT_DATA
+      ) {
+        addLog(
+          "映像が再生されていません"
+        );
+        return;
+      }
+
+      const baseline =
+        readMarkerBrightness();
+
+      if (baseline === null) {
+        addLog(
+          "マーカー領域を読み取れません"
+        );
+        return;
+      }
+
+      markerBaselineRef.current =
+        baseline;
+
+      setVisualLatency(null);
+      setIsMeasuringVisualLatency(true);
+
+      visualLatencyStartedAtRef.current =
+        performance.now();
+
+      visualLatencyFrameRef.current =
+        requestAnimationFrame(
+          detectVisualLatency
+        );
+
+      try {
+        const response = await fetch(
+          `${getApiBase()}/latency-flash`,
+          {
+            method: "POST",
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            `HTTP ${response.status}`
+          );
+        }
+      } catch (error) {
+        console.error(
+          "visual latency request failed:",
+          error
+        );
+
+        addLog(
+          "映像遅延計測の送信に失敗しました"
+        );
+
+        stopVisualLatencyDetection();
+      }
+    }, [
+      addLog,
+      detectVisualLatency,
+      getApiBase,
+      isMeasuringVisualLatency,
+      readMarkerBrightness,
+      stopVisualLatencyDetection,
+    ]);
+
   const handleWebRtcOffer =
     useCallback(
       async (
-        data: WebSocketMessage
+        data: SocketMessage
       ) => {
         if (
           !data.sdp ||
           !data.viewer_id
         ) {
-          addLog(
-            "offerのデータが不足しています"
-          );
           return;
         }
 
@@ -433,15 +703,12 @@ export default function MobilePage() {
 
         peerConnection.onconnectionstatechange =
           () => {
-            const state =
-              peerConnection.connectionState;
-
             setConnectionStatus(
-              `WebRTC: ${state}`
+              `WebRTC: ${peerConnection.connectionState}`
             );
 
             addLog(
-              `peer: ${state}`
+              `peer: ${peerConnection.connectionState}`
             );
           };
 
@@ -452,39 +719,23 @@ export default function MobilePage() {
             );
           };
 
-        peerConnection.onicegatheringstatechange =
-          () => {
-            console.log(
-              "ice gathering:",
-              peerConnection.iceGatheringState
-            );
-          };
-
         peerConnection.ontrack = (
           event
         ) => {
-          addLog(
-            "映像トラックを受信しました"
-          );
-
           const video =
             videoRef.current;
 
           if (!video) {
-            addLog(
-              "video要素が見つかりません"
-            );
             return;
           }
 
-          const receivedStream =
+          const stream =
             event.streams[0] ??
             new MediaStream([
               event.track,
             ]);
 
-          video.srcObject =
-            receivedStream;
+          video.srcObject = stream;
 
           video
             .play()
@@ -500,7 +751,7 @@ export default function MobilePage() {
               );
 
               addLog(
-                "映像の自動再生に失敗しました"
+                "映像再生に失敗しました"
               );
             });
         };
@@ -540,10 +791,6 @@ export default function MobilePage() {
           )
         );
 
-        addLog(
-          "Remote Description設定完了"
-        );
-
         for (const candidate of pendingCandidatesRef.current) {
           try {
             await peerConnection.addIceCandidate(
@@ -553,7 +800,7 @@ export default function MobilePage() {
             );
           } catch (error) {
             console.error(
-              "pending candidate failed:",
+              "pending ICE failed:",
               error
             );
           }
@@ -569,24 +816,9 @@ export default function MobilePage() {
           answer
         );
 
-        const socket =
-          socketRef.current;
-
-        if (
-          !socket ||
-          socket.readyState !==
-            WebSocket.OPEN
-        ) {
-          addLog(
-            "answer送信時にWebSocketが切断されています"
-          );
-          return;
-        }
-
-        socket.send(
+        socketRef.current?.send(
           JSON.stringify({
-            type:
-              "webrtc_answer",
+            type: "webrtc_answer",
             viewer_id:
               viewerIdRef.current,
             sdp:
@@ -634,12 +866,7 @@ export default function MobilePage() {
         const data =
           JSON.parse(
             event.data
-          ) as WebSocketMessage;
-
-        console.log(
-          "viewer websocket message:",
-          data
-        );
+          ) as SocketMessage;
 
         if (
           data.type ===
@@ -699,22 +926,9 @@ export default function MobilePage() {
             return;
           }
 
-          addLog(
-            `offer宛先: ${data.viewer_id.slice(
-              0,
-              8
-            )}`
-          );
-
-          if (
-            !viewerIdRef.current
-          ) {
+          if (!viewerIdRef.current) {
             pendingOfferRef.current =
               data;
-
-            addLog(
-              "viewer ID確定までofferを保留"
-            );
             return;
           }
 
@@ -728,7 +942,6 @@ export default function MobilePage() {
           await handleWebRtcOffer(
             data
           );
-
           return;
         }
 
@@ -738,14 +951,9 @@ export default function MobilePage() {
         ) {
           if (
             !data.viewer_id ||
-            !data.candidate
-          ) {
-            return;
-          }
-
-          if (
+            !data.candidate ||
             data.viewer_id !==
-            viewerIdRef.current
+              viewerIdRef.current
           ) {
             return;
           }
@@ -761,50 +969,28 @@ export default function MobilePage() {
               data.candidate
             );
 
-            addLog(
-              "ICE Candidateを保留"
-            );
-
             return;
           }
 
-          try {
-            await peerConnection.addIceCandidate(
-              new RTCIceCandidate(
-                data.candidate
-              )
-            );
-          } catch (error) {
-            console.error(
-              "addIceCandidate failed:",
-              error
-            );
-
-            addLog(
-              "ICE Candidate追加失敗"
-            );
-          }
+          await peerConnection.addIceCandidate(
+            new RTCIceCandidate(
+              data.candidate
+            )
+          );
         }
       } catch (error) {
         console.error(
-          "websocket message failed:",
+          "message handling failed:",
           error
         );
 
         addLog(
-          "WebSocketメッセージ処理失敗"
+          "メッセージ処理に失敗しました"
         );
       }
     };
 
-    socket.onerror = (
-      event
-    ) => {
-      console.error(
-        "websocket error:",
-        event
-      );
-
+    socket.onerror = () => {
       setConnectionStatus(
         "WebSocketエラー"
       );
@@ -827,13 +1013,12 @@ export default function MobilePage() {
     return () => {
       socket.close();
 
-      socketRef.current =
-        null;
-
       peerConnectionRef.current?.close();
 
       peerConnectionRef.current =
         null;
+
+      socketRef.current = null;
 
       pendingOfferRef.current =
         null;
@@ -841,17 +1026,12 @@ export default function MobilePage() {
       pendingCandidatesRef.current =
         [];
 
-      const video =
-        videoRef.current;
-
-      if (video) {
-        video.srcObject =
-          null;
-      }
+      stopVisualLatencyDetection();
     };
   }, [
     addLog,
     handleWebRtcOffer,
+    stopVisualLatencyDetection,
   ]);
 
   useEffect(() => {
@@ -865,30 +1045,15 @@ export default function MobilePage() {
         }
       };
 
-    const handleBeforeUnload =
-      () => {
-        void releaseAllKeys();
-      };
-
     document.addEventListener(
       "visibilitychange",
       handleVisibilityChange
-    );
-
-    window.addEventListener(
-      "beforeunload",
-      handleBeforeUnload
     );
 
     return () => {
       document.removeEventListener(
         "visibilitychange",
         handleVisibilityChange
-      );
-
-      window.removeEventListener(
-        "beforeunload",
-        handleBeforeUnload
       );
 
       void releaseAllKeys();
@@ -968,7 +1133,31 @@ export default function MobilePage() {
       [sendKey]
     );
 
-  const handleJoystickPointerDown = (
+  const stopJoystick =
+    useCallback(() => {
+      joystickPointerIdRef.current =
+        null;
+
+      setJoystickOffset({
+        x: 0,
+        y: 0,
+      });
+
+      for (
+        const key of
+        activeMovementKeysRef.current
+      ) {
+        void sendKey(
+          key,
+          "up"
+        );
+      }
+
+      activeMovementKeysRef.current =
+        new Set();
+    }, [sendKey]);
+
+  const handleJoystickDown = (
     event: ReactPointerEvent<HTMLDivElement>
   ) => {
     event.preventDefault();
@@ -993,7 +1182,7 @@ export default function MobilePage() {
     };
   };
 
-  const handleJoystickPointerMove = (
+  const handleJoystickMove = (
     event: ReactPointerEvent<HTMLDivElement>
   ) => {
     if (
@@ -1005,14 +1194,13 @@ export default function MobilePage() {
 
     event.preventDefault();
 
-    const center =
-      joystickCenterRef.current;
-
     const rawX =
-      event.clientX - center.x;
+      event.clientX -
+      joystickCenterRef.current.x;
 
     const rawY =
-      event.clientY - center.y;
+      event.clientY -
+      joystickCenterRef.current.y;
 
     const distance = Math.hypot(
       rawX,
@@ -1025,48 +1213,18 @@ export default function MobilePage() {
           distance
         : 1;
 
-    const offsetX =
-      rawX * ratio;
-
-    const offsetY =
-      rawY * ratio;
+    const x = rawX * ratio;
+    const y = rawY * ratio;
 
     setJoystickOffset({
-      x: offsetX,
-      y: offsetY,
+      x,
+      y,
     });
 
-    updateMovementKeys(
-      offsetX,
-      offsetY
-    );
+    updateMovementKeys(x, y);
   };
 
-  const stopJoystick =
-    useCallback(() => {
-      joystickPointerIdRef.current =
-        null;
-
-      setJoystickOffset({
-        x: 0,
-        y: 0,
-      });
-
-      const currentKeys =
-        activeMovementKeysRef.current;
-
-      for (const key of currentKeys) {
-        void sendKey(
-          key,
-          "up"
-        );
-      }
-
-      activeMovementKeysRef.current =
-        new Set();
-    }, [sendKey]);
-
-  const handleJoystickPointerUp = (
+  const handleJoystickUp = (
     event: ReactPointerEvent<HTMLDivElement>
   ) => {
     if (
@@ -1077,11 +1235,10 @@ export default function MobilePage() {
     }
 
     event.preventDefault();
-
     stopJoystick();
   };
 
-  const handleLookPointerDown = (
+  const handleLookDown = (
     event: ReactPointerEvent<HTMLDivElement>
   ) => {
     event.preventDefault();
@@ -1099,7 +1256,7 @@ export default function MobilePage() {
     );
   };
 
-  const handleLookPointerMove = (
+  const handleLookMove = (
     event: ReactPointerEvent<HTMLDivElement>
   ) => {
     if (
@@ -1109,23 +1266,21 @@ export default function MobilePage() {
       return;
     }
 
-    const previousPoint =
+    const previous =
       previousLookPointRef.current;
 
-    if (!previousPoint) {
+    if (!previous) {
       return;
     }
 
     event.preventDefault();
 
     const dx =
-      (event.clientX -
-        previousPoint.x) *
+      (event.clientX - previous.x) *
       MOUSE_SENSITIVITY;
 
     const dy =
-      (event.clientY -
-        previousPoint.y) *
+      (event.clientY - previous.y) *
       MOUSE_SENSITIVITY;
 
     previousLookPointRef.current = {
@@ -1136,48 +1291,10 @@ export default function MobilePage() {
     queueMouseMovement(dx, dy);
   };
 
-  const stopLook = useCallback(() => {
-    lookPointerIdRef.current =
-      null;
-
-    previousLookPointRef.current =
-      null;
-  }, []);
-
-  const handleLookPointerUp = (
-    event: ReactPointerEvent<HTMLDivElement>
-  ) => {
-    if (
-      lookPointerIdRef.current !==
-      event.pointerId
-    ) {
-      return;
-    }
-
-    event.preventDefault();
-
-    stopLook();
+  const stopLook = () => {
+    lookPointerIdRef.current = null;
+    previousLookPointRef.current = null;
   };
-
-  const pressMomentaryKey =
-    useCallback(
-      (
-        key: string
-      ) => {
-        void sendKey(
-          key,
-          "down"
-        );
-
-        window.setTimeout(() => {
-          void sendKey(
-            key,
-            "up"
-          );
-        }, 100);
-      },
-      [sendKey]
-    );
 
   return (
     <main
@@ -1191,12 +1308,17 @@ export default function MobilePage() {
         autoPlay
         playsInline
         muted
-        className="absolute inset-0 h-full w-full object-contain bg-black"
+        className="absolute inset-0 h-full w-full bg-black object-contain"
       />
 
-      <div className="pointer-events-none absolute inset-0 bg-black/5" />
+      <canvas
+        ref={latencyCanvasRef}
+        width={48}
+        height={48}
+        className="hidden"
+      />
 
-      <div className="absolute left-3 top-3 z-30 max-w-[55vw] rounded-lg bg-black/70 px-3 py-2 text-xs">
+      <div className="absolute left-3 top-3 z-30 rounded-lg bg-black/70 px-3 py-2 text-xs">
         <div>
           状態: {connectionStatus}
         </div>
@@ -1213,7 +1335,7 @@ export default function MobilePage() {
         </div>
       </div>
 
-      <div className="absolute right-3 top-3 z-30 rounded-lg bg-black/70 px-3 py-2 text-right text-xs">
+      <div className="absolute right-3 top-3 z-40 rounded-lg bg-black/75 px-3 py-2 text-right text-xs">
         <div>
           Key RTT:{" "}
           {keyRtt !== null
@@ -1229,11 +1351,33 @@ export default function MobilePage() {
         </div>
 
         <div>
-          Average:{" "}
+          Average RTT:{" "}
           {averageRtt !== null
             ? `${averageRtt} ms`
             : "-"}
         </div>
+
+        <div className="mt-1 font-semibold">
+          Visual Latency:{" "}
+          {visualLatency !== null
+            ? `${visualLatency} ms`
+            : "-"}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            void measureVisualLatency();
+          }}
+          disabled={
+            isMeasuringVisualLatency
+          }
+          className="mt-2 rounded bg-yellow-400 px-3 py-2 font-semibold text-black disabled:opacity-50"
+        >
+          {isMeasuringVisualLatency
+            ? "計測中..."
+            : "映像遅延を計測"}
+        </button>
       </div>
 
       <button
@@ -1241,47 +1385,37 @@ export default function MobilePage() {
         onClick={() => {
           void focusGame();
         }}
-        className="absolute left-1/2 top-3 z-40 -translate-x-1/2 rounded-lg bg-white/80 px-4 py-2 text-sm font-semibold text-black active:bg-white"
+        className="absolute left-1/2 top-3 z-50 -translate-x-1/2 rounded bg-white/85 px-4 py-2 text-sm font-semibold text-black"
       >
         Focus Game
       </button>
 
       <div
         onPointerDown={
-          handleLookPointerDown
+          handleLookDown
         }
         onPointerMove={
-          handleLookPointerMove
+          handleLookMove
         }
-        onPointerUp={
-          handleLookPointerUp
-        }
-        onPointerCancel={
-          handleLookPointerUp
-        }
+        onPointerUp={stopLook}
+        onPointerCancel={stopLook}
         className="absolute inset-y-0 right-0 z-10 w-1/2"
-        style={{
-          touchAction: "none",
-        }}
       />
 
       <div
         onPointerDown={
-          handleJoystickPointerDown
+          handleJoystickDown
         }
         onPointerMove={
-          handleJoystickPointerMove
+          handleJoystickMove
         }
         onPointerUp={
-          handleJoystickPointerUp
+          handleJoystickUp
         }
         onPointerCancel={
-          handleJoystickPointerUp
+          handleJoystickUp
         }
         className="absolute bottom-8 left-8 z-30 flex h-36 w-36 items-center justify-center rounded-full border-2 border-white/60 bg-black/35"
-        style={{
-          touchAction: "none",
-        }}
       >
         <div
           className="h-16 w-16 rounded-full border border-white/70 bg-white/35"
@@ -1294,9 +1428,7 @@ export default function MobilePage() {
       <div className="absolute bottom-8 right-6 z-40 flex items-end gap-3">
         <button
           type="button"
-          onPointerDown={(
-            event
-          ) => {
+          onPointerDown={(event) => {
             event.preventDefault();
 
             void sendKey(
@@ -1304,9 +1436,7 @@ export default function MobilePage() {
               "down"
             );
           }}
-          onPointerUp={(
-            event
-          ) => {
+          onPointerUp={(event) => {
             event.preventDefault();
 
             void sendKey(
@@ -1320,40 +1450,44 @@ export default function MobilePage() {
               "up"
             );
           }}
-          className="h-16 w-16 rounded-full border border-white/60 bg-black/55 text-sm font-semibold active:bg-white/40"
+          className="h-16 w-16 rounded-full border border-white/60 bg-black/55 text-sm font-semibold"
         >
           Shift
         </button>
 
         <button
           type="button"
-          onPointerDown={(
-            event
-          ) => {
+          onPointerDown={(event) => {
             event.preventDefault();
 
-            pressMomentaryKey(
-              "space"
+            void sendKey(
+              "space",
+              "down"
             );
+
+            window.setTimeout(() => {
+              void sendKey(
+                "space",
+                "up"
+              );
+            }, 100);
           }}
-          className="h-20 w-20 rounded-full border-2 border-white/70 bg-white/25 text-sm font-bold active:bg-white/50"
+          className="h-20 w-20 rounded-full border-2 border-white/70 bg-white/25 text-sm font-bold"
         >
           Jump
         </button>
       </div>
 
-      <details className="absolute bottom-1 left-1/2 z-50 max-h-36 w-[45vw] -translate-x-1/2 overflow-auto rounded bg-black/70 px-2 py-1 text-[10px]">
+      <details className="absolute bottom-1 left-1/2 z-50 max-h-36 w-[45vw] -translate-x-1/2 overflow-auto rounded bg-black/75 px-2 py-1 text-[10px]">
         <summary>
           WebRTCログ
         </summary>
 
-        {logs.map(
-          (log, index) => (
-            <div key={`${log}-${index}`}>
-              {log}
-            </div>
-          )
-        )}
+        {logs.map((log, index) => (
+          <div key={`${index}-${log}`}>
+            {log}
+          </div>
+        ))}
       </details>
     </main>
   );
