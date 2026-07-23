@@ -94,17 +94,21 @@ export default function MobilePage() {
   const [viewerCount, setViewerCount] =
     useState(0);
 
-  const [connectionStatus, setConnectionStatus] =
-    useState("接続準備中");
+  const [
+    connectionStatus,
+    setConnectionStatus,
+  ] = useState("接続準備中");
 
   const [logs, setLogs] =
     useState<string[]>([]);
 
-  const [joystickOffset, setJoystickOffset] =
-    useState<Point>({
-      x: 0,
-      y: 0,
-    });
+  const [
+    joystickOffset,
+    setJoystickOffset,
+  ] = useState<Point>({
+    x: 0,
+    y: 0,
+  });
 
   const [keyRtt, setKeyRtt] =
     useState<number | null>(null);
@@ -115,8 +119,35 @@ export default function MobilePage() {
   const [averageRtt, setAverageRtt] =
     useState<number | null>(null);
 
-  const [visualLatency, setVisualLatency] =
-    useState<number | null>(null);
+  const [
+    visualLatency,
+    setVisualLatency,
+  ] = useState<number | null>(null);
+
+  const [
+    visualLatencyAverage,
+    setVisualLatencyAverage,
+  ] = useState<number | null>(null);
+
+  const [
+    visualLatencyMin,
+    setVisualLatencyMin,
+  ] = useState<number | null>(null);
+
+  const [
+    visualLatencyMax,
+    setVisualLatencyMax,
+  ] = useState<number | null>(null);
+
+  const [
+    visualLatencySamples,
+    setVisualLatencySamples,
+  ] = useState(0);
+
+  const [
+    recentVisualLatencies,
+    setRecentVisualLatencies,
+  ] = useState<number[]>([]);
 
   const [
     isMeasuringVisualLatency,
@@ -124,6 +155,9 @@ export default function MobilePage() {
   ] = useState(false);
 
   const rttHistoryRef =
+    useRef<number[]>([]);
+
+  const visualLatencyHistoryRef =
     useRef<number[]>([]);
 
   const addLog = useCallback(
@@ -179,12 +213,79 @@ export default function MobilePage() {
     []
   );
 
+  const recordVisualLatency =
+    useCallback((latency: number) => {
+      const rounded =
+        Math.round(latency * 10) / 10;
+
+      const history = [
+        ...visualLatencyHistoryRef.current,
+        rounded,
+      ].slice(-30);
+
+      visualLatencyHistoryRef.current =
+        history;
+
+      const total = history.reduce(
+        (sum, value) => sum + value,
+        0
+      );
+
+      setVisualLatency(rounded);
+
+      setVisualLatencyAverage(
+        Math.round(
+          (total / history.length) * 10
+        ) / 10
+      );
+
+      setVisualLatencyMin(
+        Math.round(
+          Math.min(...history) * 10
+        ) / 10
+      );
+
+      setVisualLatencyMax(
+        Math.round(
+          Math.max(...history) * 10
+        ) / 10
+      );
+
+      setVisualLatencySamples(
+        history.length
+      );
+
+      setRecentVisualLatencies(
+        [...history]
+          .reverse()
+          .slice(0, 10)
+      );
+    }, []);
+
+  const resetVisualLatencyHistory =
+    useCallback(() => {
+      visualLatencyHistoryRef.current =
+        [];
+
+      setVisualLatency(null);
+      setVisualLatencyAverage(null);
+      setVisualLatencyMin(null);
+      setVisualLatencyMax(null);
+      setVisualLatencySamples(0);
+      setRecentVisualLatencies([]);
+
+      addLog(
+        "Visual Latency履歴をリセットしました"
+      );
+    }, [addLog]);
+
   const sendKey = useCallback(
     async (
       key: string,
       action: "down" | "up" | "press"
     ) => {
-      const startedAt = performance.now();
+      const startedAt =
+        performance.now();
 
       try {
         const response = await fetch(
@@ -250,7 +351,8 @@ export default function MobilePage() {
         return;
       }
 
-      const startedAt = performance.now();
+      const startedAt =
+        performance.now();
 
       try {
         const response = await fetch(
@@ -348,35 +450,36 @@ export default function MobilePage() {
       [flushMouseMovement]
     );
 
-  const focusGame = useCallback(async () => {
-    try {
-      const response = await fetch(
-        `${getApiBase()}/focus`,
-        {
-          method: "POST",
-        }
-      );
+  const focusGame =
+    useCallback(async () => {
+      try {
+        const response = await fetch(
+          `${getApiBase()}/focus`,
+          {
+            method: "POST",
+          }
+        );
 
-      if (!response.ok) {
-        throw new Error(
-          `HTTP ${response.status}`
+        if (!response.ok) {
+          throw new Error(
+            `HTTP ${response.status}`
+          );
+        }
+
+        addLog(
+          "UE5をフォーカスしました"
+        );
+      } catch (error) {
+        console.error(
+          "focus failed:",
+          error
+        );
+
+        addLog(
+          "UE5のフォーカスに失敗しました"
         );
       }
-
-      addLog(
-        "UE5をフォーカスしました"
-      );
-    } catch (error) {
-      console.error(
-        "focus failed:",
-        error
-      );
-
-      addLog(
-        "UE5のフォーカスに失敗しました"
-      );
-    }
-  }, [addLog, getApiBase]);
+    }, [addLog, getApiBase]);
 
   const releaseAllKeys =
     useCallback(async () => {
@@ -449,10 +552,6 @@ export default function MobilePage() {
         return null;
       }
 
-      /*
-       * Windows画面左上の約180×180pxを監視。
-       * マーカーは画面左上から20pxの位置にある。
-       */
       const sourceWidth = Math.min(
         180,
         video.videoWidth
@@ -510,10 +609,10 @@ export default function MobilePage() {
         return null;
       }
 
-      return brightnessTotal / pixelCount;
-    },
-    []
-  );
+      return (
+        brightnessTotal / pixelCount
+      );
+    }, []);
 
   const detectVisualLatency = useCallback(
     function detectVisualLatencyFrame() {
@@ -538,18 +637,16 @@ export default function MobilePage() {
         const increase =
           brightness - baseline;
 
-        /*
-        * マーカーが黒から白へ変わった場合、
-        * 基準値より明るさが大きく上昇します。
-        */
         if (increase > 45) {
           const latency =
-            performance.now() - startedAt;
+            performance.now() -
+            startedAt;
 
           const rounded =
-            Math.round(latency * 10) / 10;
+            Math.round(latency * 10) /
+            10;
 
-          setVisualLatency(rounded);
+          recordVisualLatency(rounded);
 
           addLog(
             `Visual Latency: ${rounded} ms`
@@ -560,11 +657,9 @@ export default function MobilePage() {
         }
       }
 
-      /*
-      * 5秒経過しても検出できなければ終了します。
-      */
       if (
-        performance.now() - startedAt >
+        performance.now() -
+          startedAt >
         5000
       ) {
         addLog(
@@ -583,6 +678,7 @@ export default function MobilePage() {
     [
       addLog,
       readMarkerBrightness,
+      recordVisualLatency,
       stopVisualLatencyDetection,
     ]
   );
@@ -791,7 +887,10 @@ export default function MobilePage() {
           )
         );
 
-        for (const candidate of pendingCandidatesRef.current) {
+        for (
+          const candidate of
+          pendingCandidatesRef.current
+        ) {
           try {
             await peerConnection.addIceCandidate(
               new RTCIceCandidate(
@@ -1065,6 +1164,9 @@ export default function MobilePage() {
         cancelAnimationFrame(
           mouseAnimationFrameRef.current
         );
+
+        mouseAnimationFrameRef.current =
+          null;
       }
     };
   }, [releaseAllKeys]);
@@ -1161,6 +1263,14 @@ export default function MobilePage() {
     event: ReactPointerEvent<HTMLDivElement>
   ) => {
     event.preventDefault();
+    event.stopPropagation();
+
+    if (
+      joystickPointerIdRef.current !==
+      null
+    ) {
+      return;
+    }
 
     joystickPointerIdRef.current =
       event.pointerId;
@@ -1193,6 +1303,7 @@ export default function MobilePage() {
     }
 
     event.preventDefault();
+    event.stopPropagation();
 
     const rawX =
       event.clientX -
@@ -1235,6 +1346,18 @@ export default function MobilePage() {
     }
 
     event.preventDefault();
+    event.stopPropagation();
+
+    if (
+      event.currentTarget.hasPointerCapture(
+        event.pointerId
+      )
+    ) {
+      event.currentTarget.releasePointerCapture(
+        event.pointerId
+      );
+    }
+
     stopJoystick();
   };
 
@@ -1242,6 +1365,12 @@ export default function MobilePage() {
     event: ReactPointerEvent<HTMLDivElement>
   ) => {
     event.preventDefault();
+
+    if (
+      lookPointerIdRef.current !== null
+    ) {
+      return;
+    }
 
     lookPointerIdRef.current =
       event.pointerId;
@@ -1291,7 +1420,28 @@ export default function MobilePage() {
     queueMouseMovement(dx, dy);
   };
 
-  const stopLook = () => {
+  const handleLookUp = (
+    event: ReactPointerEvent<HTMLDivElement>
+  ) => {
+    if (
+      lookPointerIdRef.current !==
+      event.pointerId
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (
+      event.currentTarget.hasPointerCapture(
+        event.pointerId
+      )
+    ) {
+      event.currentTarget.releasePointerCapture(
+        event.pointerId
+      );
+    }
+
     lookPointerIdRef.current = null;
     previousLookPointRef.current = null;
   };
@@ -1301,6 +1451,9 @@ export default function MobilePage() {
       className="relative h-dvh w-screen overflow-hidden bg-black text-white"
       style={{
         touchAction: "none",
+        userSelect: "none",
+        WebkitUserSelect: "none",
+        WebkitTouchCallout: "none",
       }}
     >
       <video
@@ -1308,7 +1461,8 @@ export default function MobilePage() {
         autoPlay
         playsInline
         muted
-        className="absolute inset-0 h-full w-full bg-black object-contain"
+        draggable={false}
+        className="pointer-events-none absolute inset-0 h-full w-full bg-black object-contain"
       />
 
       <canvas
@@ -1318,7 +1472,7 @@ export default function MobilePage() {
         className="hidden"
       />
 
-      <div className="absolute left-3 top-3 z-30 rounded-lg bg-black/70 px-3 py-2 text-xs">
+      <div className="pointer-events-none absolute left-3 top-3 z-30 rounded-lg bg-black/70 px-3 py-2 text-xs">
         <div>
           状態: {connectionStatus}
         </div>
@@ -1357,27 +1511,99 @@ export default function MobilePage() {
             : "-"}
         </div>
 
-        <div className="mt-1 font-semibold">
-          Visual Latency:{" "}
-          {visualLatency !== null
-            ? `${visualLatency} ms`
-            : "-"}
+        <div className="mt-2 border-t border-white/20 pt-2">
+          <div className="font-semibold">
+            Visual Latency
+          </div>
+
+          <div>
+            Latest:{" "}
+            {visualLatency !== null
+              ? `${visualLatency} ms`
+              : "-"}
+          </div>
+
+          <div>
+            Average:{" "}
+            {visualLatencyAverage !== null
+              ? `${visualLatencyAverage} ms`
+              : "-"}
+          </div>
+
+          <div>
+            Min:{" "}
+            {visualLatencyMin !== null
+              ? `${visualLatencyMin} ms`
+              : "-"}
+          </div>
+
+          <div>
+            Max:{" "}
+            {visualLatencyMax !== null
+              ? `${visualLatencyMax} ms`
+              : "-"}
+          </div>
+
+          <div>
+            Samples:{" "}
+            {visualLatencySamples}
+          </div>
+
+          <div className="mt-2 text-left">
+            <div className="font-semibold">
+              Recent 10
+            </div>
+
+            {recentVisualLatencies.length >
+            0 ? (
+              <ol className="max-h-24 overflow-y-auto">
+                {recentVisualLatencies.map(
+                  (latency, index) => (
+                    <li
+                      key={`${latency}-${index}`}
+                    >
+                      {index + 1}.{" "}
+                      {latency} ms
+                    </li>
+                  )
+                )}
+              </ol>
+            ) : (
+              <div>-</div>
+            )}
+          </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            void measureVisualLatency();
-          }}
-          disabled={
-            isMeasuringVisualLatency
-          }
-          className="mt-2 rounded bg-yellow-400 px-3 py-2 font-semibold text-black disabled:opacity-50"
-        >
-          {isMeasuringVisualLatency
-            ? "計測中..."
-            : "映像遅延を計測"}
-        </button>
+        <div className="mt-2 flex gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              void measureVisualLatency();
+            }}
+            disabled={
+              isMeasuringVisualLatency
+            }
+            className="touch-none rounded bg-yellow-400 px-3 py-2 font-semibold text-black disabled:opacity-50"
+          >
+            {isMeasuringVisualLatency
+              ? "計測中..."
+              : "映像遅延を計測"}
+          </button>
+
+          <button
+            type="button"
+            onClick={
+              resetVisualLatencyHistory
+            }
+            disabled={
+              isMeasuringVisualLatency ||
+              visualLatencySamples === 0
+            }
+            className="touch-none rounded bg-white/20 px-3 py-2 font-semibold text-white disabled:opacity-50"
+          >
+            履歴リセット
+          </button>
+        </div>
       </div>
 
       <button
@@ -1385,7 +1611,7 @@ export default function MobilePage() {
         onClick={() => {
           void focusGame();
         }}
-        className="absolute left-1/2 top-3 z-50 -translate-x-1/2 rounded bg-white/85 px-4 py-2 text-sm font-semibold text-black"
+        className="absolute left-1/2 top-3 z-50 -translate-x-1/2 touch-none rounded bg-white/85 px-4 py-2 text-sm font-semibold text-black"
       >
         Focus Game
       </button>
@@ -1397,9 +1623,16 @@ export default function MobilePage() {
         onPointerMove={
           handleLookMove
         }
-        onPointerUp={stopLook}
-        onPointerCancel={stopLook}
-        className="absolute inset-y-0 right-0 z-10 w-1/2"
+        onPointerUp={
+          handleLookUp
+        }
+        onPointerCancel={
+          handleLookUp
+        }
+        onContextMenu={(event) => {
+          event.preventDefault();
+        }}
+        className="absolute inset-y-0 right-0 z-10 w-1/2 touch-none"
       />
 
       <div
@@ -1415,10 +1648,13 @@ export default function MobilePage() {
         onPointerCancel={
           handleJoystickUp
         }
-        className="absolute bottom-8 left-8 z-30 flex h-36 w-36 items-center justify-center rounded-full border-2 border-white/60 bg-black/35"
+        onContextMenu={(event) => {
+          event.preventDefault();
+        }}
+        className="absolute bottom-8 left-8 z-30 flex h-36 w-36 touch-none items-center justify-center rounded-full border-2 border-white/60 bg-black/35"
       >
         <div
-          className="h-16 w-16 rounded-full border border-white/70 bg-white/35"
+          className="pointer-events-none h-16 w-16 rounded-full border border-white/70 bg-white/35"
           style={{
             transform: `translate(${joystickOffset.x}px, ${joystickOffset.y}px)`,
           }}
@@ -1430,6 +1666,9 @@ export default function MobilePage() {
           type="button"
           onPointerDown={(event) => {
             event.preventDefault();
+            event.currentTarget.setPointerCapture(
+              event.pointerId
+            );
 
             void sendKey(
               "shift",
@@ -1438,6 +1677,16 @@ export default function MobilePage() {
           }}
           onPointerUp={(event) => {
             event.preventDefault();
+
+            if (
+              event.currentTarget.hasPointerCapture(
+                event.pointerId
+              )
+            ) {
+              event.currentTarget.releasePointerCapture(
+                event.pointerId
+              );
+            }
 
             void sendKey(
               "shift",
@@ -1450,7 +1699,7 @@ export default function MobilePage() {
               "up"
             );
           }}
-          className="h-16 w-16 rounded-full border border-white/60 bg-black/55 text-sm font-semibold"
+          className="h-16 w-16 touch-none rounded-full border border-white/60 bg-black/55 text-sm font-semibold"
         >
           Shift
         </button>
@@ -1472,7 +1721,7 @@ export default function MobilePage() {
               );
             }, 100);
           }}
-          className="h-20 w-20 rounded-full border-2 border-white/70 bg-white/25 text-sm font-bold"
+          className="h-20 w-20 touch-none rounded-full border-2 border-white/70 bg-white/25 text-sm font-bold"
         >
           Jump
         </button>
