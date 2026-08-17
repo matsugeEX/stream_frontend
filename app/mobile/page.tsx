@@ -178,6 +178,32 @@ export default function MobilePage() {
     return `http://${window.location.hostname}:8010`;
   }, []);
 
+  const safeReleasePointerCapture =
+    useCallback(
+      (
+        element: HTMLElement,
+        pointerId: number
+      ) => {
+        try {
+          if (
+            element.hasPointerCapture(
+              pointerId
+            )
+          ) {
+            element.releasePointerCapture(
+              pointerId
+            );
+          }
+        } catch (error) {
+          console.warn(
+            "releasePointerCapture skipped:",
+            error
+          );
+        }
+      },
+      []
+    );
+
   const recordLatency = useCallback(
     (
       latency: number,
@@ -1348,15 +1374,10 @@ export default function MobilePage() {
     event.preventDefault();
     event.stopPropagation();
 
-    if (
-      event.currentTarget.hasPointerCapture(
-        event.pointerId
-      )
-    ) {
-      event.currentTarget.releasePointerCapture(
-        event.pointerId
-      );
-    }
+    safeReleasePointerCapture(
+      event.currentTarget,
+      event.pointerId
+    );
 
     stopJoystick();
   };
@@ -1432,15 +1453,10 @@ export default function MobilePage() {
 
     event.preventDefault();
 
-    if (
-      event.currentTarget.hasPointerCapture(
-        event.pointerId
-      )
-    ) {
-      event.currentTarget.releasePointerCapture(
-        event.pointerId
-      );
-    }
+    safeReleasePointerCapture(
+      event.currentTarget,
+      event.pointerId
+    );
 
     lookPointerIdRef.current = null;
     previousLookPointRef.current = null;
@@ -1472,150 +1488,170 @@ export default function MobilePage() {
         className="hidden"
       />
 
-      <div className="pointer-events-none absolute left-3 top-3 z-30 rounded-lg bg-black/70 px-3 py-2 text-xs">
+      {/* 左上：接続情報 */}
+      <div className="pointer-events-none absolute left-2 top-2 z-30 rounded bg-black/70 px-2 py-1 text-[10px] leading-4">
         <div>
-          状態: {connectionStatus}
+          {connectionStatus}
         </div>
 
         <div>
           Viewer:{" "}
           {viewerId
             ? viewerId.slice(0, 8)
-            : "-"}
-        </div>
-
-        <div>
-          視聴者数: {viewerCount}
+            : "-"}{" "}
+          / {viewerCount}
         </div>
       </div>
 
-      <div className="pointer-events-none absolute right-3 top-3 z-40 rounded-lg bg-black/75 px-3 py-2 text-right text-xs">
-        <div>
-          Key RTT:{" "}
-          {keyRtt !== null
-            ? `${keyRtt} ms`
-            : "-"}
+      {/* 上中央：Focus */}
+      <button
+        type="button"
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+
+          void focusGame();
+        }}
+        className="absolute left-1/2 top-2 z-50 -translate-x-1/2 touch-none rounded bg-white/85 px-3 py-1.5 text-xs font-semibold text-black"
+      >
+        Focus Game
+      </button>
+
+      {/*
+        右上：低い横長の計測パネル
+        右下ボタンとは高さが離れているので干渉しない
+      */}
+      <div className="pointer-events-none absolute right-2 top-2 z-50 rounded bg-black/75 px-2 py-1 text-[10px]">
+        <div className="flex items-center gap-3 whitespace-nowrap">
+          <span>
+            Key:{" "}
+            {keyRtt !== null
+              ? `${keyRtt}ms`
+              : "-"}
+          </span>
+
+          <span>
+            Mouse:{" "}
+            {mouseRtt !== null
+              ? `${mouseRtt}ms`
+              : "-"}
+          </span>
+
+          <span>
+            RTT Avg:{" "}
+            {averageRtt !== null
+              ? `${averageRtt}ms`
+              : "-"}
+          </span>
         </div>
 
-        <div>
-          Mouse RTT:{" "}
-          {mouseRtt !== null
-            ? `${mouseRtt} ms`
-            : "-"}
-        </div>
+        <div className="mt-1 flex items-center gap-3 whitespace-nowrap border-t border-white/20 pt-1">
+          <span className="font-semibold">
+            VL
+          </span>
 
-        <div>
-          Average RTT:{" "}
-          {averageRtt !== null
-            ? `${averageRtt} ms`
-            : "-"}
-        </div>
-
-        <div className="mt-2 border-t border-white/20 pt-2">
-          <div className="font-semibold">
-            Visual Latency
-          </div>
-
-          <div>
+          <span>
             Latest:{" "}
             {visualLatency !== null
-              ? `${visualLatency} ms`
+              ? `${visualLatency}ms`
               : "-"}
-          </div>
+          </span>
 
-          <div>
-            Average:{" "}
+          <span>
+            Avg:{" "}
             {visualLatencyAverage !== null
-              ? `${visualLatencyAverage} ms`
+              ? `${visualLatencyAverage}ms`
               : "-"}
-          </div>
+          </span>
 
-          <div>
+          <span>
             Min:{" "}
             {visualLatencyMin !== null
-              ? `${visualLatencyMin} ms`
+              ? `${visualLatencyMin}ms`
               : "-"}
-          </div>
+          </span>
 
-          <div>
+          <span>
             Max:{" "}
             {visualLatencyMax !== null
-              ? `${visualLatencyMax} ms`
+              ? `${visualLatencyMax}ms`
               : "-"}
-          </div>
+          </span>
 
-          <div>
-            Samples:{" "}
-            {visualLatencySamples}
-          </div>
-
-          <div className="mt-2 text-left">
-            <div className="font-semibold">
-              Recent 10
-            </div>
-
-            {recentVisualLatencies.length >
-            0 ? (
-              <ol className="max-h-24 overflow-y-auto">
-                {recentVisualLatencies.map(
-                  (latency, index) => (
-                    <li
-                      key={`${latency}-${index}`}
-                    >
-                      {index + 1}.{" "}
-                      {latency} ms
-                    </li>
-                  )
-                )}
-              </ol>
-            ) : (
-              <div>-</div>
-            )}
-          </div>
+          <span>
+            N: {visualLatencySamples}
+          </span>
         </div>
 
-        <div className="mt-2 flex gap-2">
+        <div className="mt-1 flex items-center justify-end gap-1">
+          <details className="pointer-events-auto relative">
+            <summary className="cursor-pointer touch-none rounded bg-white/15 px-2 py-1 text-[10px]">
+              Recent
+            </summary>
+
+            <div className="absolute right-0 top-full mt-1 min-w-28 rounded bg-black/90 p-2 shadow-lg">
+              <div className="mb-1 font-semibold">
+                Recent 10
+              </div>
+
+              {recentVisualLatencies.length >
+              0 ? (
+                <ol>
+                  {recentVisualLatencies.map(
+                    (latency, index) => (
+                      <li
+                        key={`${latency}-${index}`}
+                      >
+                        {index + 1}.{" "}
+                        {latency} ms
+                      </li>
+                    )
+                  )}
+                </ol>
+              ) : (
+                <div>-</div>
+              )}
+            </div>
+          </details>
+
           <button
             type="button"
-            onClick={() => {
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+
               void measureVisualLatency();
             }}
             disabled={
               isMeasuringVisualLatency
             }
-            className="pointer-events-auto touch-none rounded bg-yellow-400 px-3 py-2 font-semibold text-black disabled:opacity-50"
+            className="pointer-events-auto touch-none rounded bg-yellow-400 px-2 py-1 font-semibold text-black disabled:opacity-50"
           >
             {isMeasuringVisualLatency
-              ? "計測中..."
-              : "映像遅延を計測"}
+              ? "計測中"
+              : "映像遅延"}
           </button>
 
           <button
             type="button"
-            onClick={
-              resetVisualLatencyHistory
-            }
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+
+              resetVisualLatencyHistory();
+            }}
             disabled={
               isMeasuringVisualLatency ||
               visualLatencySamples === 0
             }
-            className="pointer-events-auto touch-none rounded bg-white/20 px-3 py-2 font-semibold text-white disabled:opacity-50"
+            className="pointer-events-auto touch-none rounded bg-white/20 px-2 py-1 font-semibold disabled:opacity-50"
           >
-            履歴リセット
+            Reset
           </button>
         </div>
       </div>
 
-      <button
-        type="button"
-        onClick={() => {
-          void focusGame();
-        }}
-        className="absolute left-1/2 top-3 z-50 -translate-x-1/2 touch-none rounded bg-white/85 px-4 py-2 text-sm font-semibold text-black"
-      >
-        Focus Game
-      </button>
-
+      {/* 右半分：視点操作 */}
       <div
         onPointerDown={
           handleLookDown
@@ -1635,6 +1671,7 @@ export default function MobilePage() {
         className="absolute inset-y-0 right-0 z-10 w-1/2 touch-none"
       />
 
+      {/* 左下：移動スティック */}
       <div
         onPointerDown={
           handleJoystickDown
@@ -1651,21 +1688,23 @@ export default function MobilePage() {
         onContextMenu={(event) => {
           event.preventDefault();
         }}
-        className="absolute bottom-8 left-8 z-30 flex h-36 w-36 touch-none items-center justify-center rounded-full border-2 border-white/60 bg-black/35"
+        className="absolute bottom-5 left-5 z-30 flex h-32 w-32 touch-none items-center justify-center rounded-full border-2 border-white/60 bg-black/35"
       >
         <div
-          className="pointer-events-none h-16 w-16 rounded-full border border-white/70 bg-white/35"
+          className="pointer-events-none h-14 w-14 rounded-full border border-white/70 bg-white/35"
           style={{
             transform: `translate(${joystickOffset.x}px, ${joystickOffset.y}px)`,
           }}
         />
       </div>
 
-      <div className="absolute bottom-8 right-6 z-40 flex items-end gap-3">
+      {/* 右下：アクション */}
+      <div className="absolute bottom-5 right-5 z-40 flex items-end gap-3">
         <button
           type="button"
           onPointerDown={(event) => {
             event.preventDefault();
+            event.stopPropagation();
 
             event.currentTarget.setPointerCapture(
               event.pointerId
@@ -1678,29 +1717,30 @@ export default function MobilePage() {
           }}
           onPointerUp={(event) => {
             event.preventDefault();
+            event.stopPropagation();
 
-            if (
-              event.currentTarget.hasPointerCapture(
-                event.pointerId
-              )
-            ) {
-              event.currentTarget.releasePointerCapture(
-                event.pointerId
-              );
-            }
+            safeReleasePointerCapture(
+              event.currentTarget,
+              event.pointerId
+            );
 
             void sendKey(
               "shift",
               "up"
             );
           }}
-          onPointerCancel={() => {
+          onPointerCancel={(event) => {
+            safeReleasePointerCapture(
+              event.currentTarget,
+              event.pointerId
+            );
+
             void sendKey(
               "shift",
               "up"
             );
           }}
-          className="h-16 w-16 touch-none rounded-full border border-white/60 bg-black/55 text-sm font-semibold"
+          className="h-14 w-14 touch-none rounded-full border border-white/60 bg-black/55 text-xs font-semibold"
         >
           Shift
         </button>
@@ -1709,6 +1749,7 @@ export default function MobilePage() {
           type="button"
           onPointerDown={(event) => {
             event.preventDefault();
+            event.stopPropagation();
 
             void sendKey(
               "space",
@@ -1722,7 +1763,7 @@ export default function MobilePage() {
               );
             }, 100);
           }}
-          className="h-20 w-20 touch-none rounded-full border-2 border-white/70 bg-white/25 text-sm font-bold"
+          className="h-18 w-18 flex h-[72px] w-[72px] touch-none items-center justify-center rounded-full border-2 border-white/70 bg-white/25 text-xs font-bold"
         >
           Jump
         </button>
@@ -1731,6 +1772,7 @@ export default function MobilePage() {
           type="button"
           onPointerDown={(event) => {
             event.preventDefault();
+            event.stopPropagation();
 
             event.currentTarget.setPointerCapture(
               event.pointerId
@@ -1743,37 +1785,39 @@ export default function MobilePage() {
           }}
           onPointerUp={(event) => {
             event.preventDefault();
+            event.stopPropagation();
 
-            if (
-              event.currentTarget.hasPointerCapture(
-                event.pointerId
-              )
-            ) {
-              event.currentTarget.releasePointerCapture(
-                event.pointerId
-              );
-            }
+            safeReleasePointerCapture(
+              event.currentTarget,
+              event.pointerId
+            );
 
             void sendKey(
               "ctrl",
               "up"
             );
           }}
-          onPointerCancel={() => {
+          onPointerCancel={(event) => {
+            safeReleasePointerCapture(
+              event.currentTarget,
+              event.pointerId
+            );
+
             void sendKey(
               "ctrl",
               "up"
             );
           }}
-          className="h-16 w-16 touch-none rounded-full border border-white/60 bg-black/55 text-sm font-semibold"
+          className="h-14 w-14 touch-none rounded-full border border-white/60 bg-black/55 text-xs font-semibold"
         >
           Ctrl
         </button>
       </div>
 
-      <details className="absolute bottom-1 left-1/2 z-50 max-h-36 w-[45vw] -translate-x-1/2 overflow-auto rounded bg-black/75 px-2 py-1 text-[10px]">
+      {/* デバッグログ：通常は閉じる */}
+      <details className="absolute bottom-1 left-1/2 z-50 max-h-28 w-[36vw] -translate-x-1/2 overflow-auto rounded bg-black/75 px-2 py-1 text-[9px]">
         <summary>
-          WebRTCログ
+          Log
         </summary>
 
         {logs.map((log, index) => (
