@@ -1489,7 +1489,7 @@ export default function MobilePage() {
         </div>
       </div>
 
-      <div className="absolute right-3 top-3 z-40 rounded-lg bg-black/75 px-3 py-2 text-right text-xs">
+      <div className="pointer-events-none absolute right-3 top-3 z-40 rounded-lg bg-black/75 px-3 py-2 text-right text-xs">
         <div>
           Key RTT:{" "}
           {keyRtt !== null
@@ -1583,7 +1583,7 @@ export default function MobilePage() {
             disabled={
               isMeasuringVisualLatency
             }
-            className="touch-none rounded bg-yellow-400 px-3 py-2 font-semibold text-black disabled:opacity-50"
+            className="pointer-events-auto touch-none rounded bg-yellow-400 px-3 py-2 font-semibold text-black disabled:opacity-50"
           >
             {isMeasuringVisualLatency
               ? "計測中..."
@@ -1599,7 +1599,7 @@ export default function MobilePage() {
               isMeasuringVisualLatency ||
               visualLatencySamples === 0
             }
-            className="touch-none rounded bg-white/20 px-3 py-2 font-semibold text-white disabled:opacity-50"
+            className="pointer-events-auto touch-none rounded bg-white/20 px-3 py-2 font-semibold text-white disabled:opacity-50"
           >
             履歴リセット
           </button>
@@ -1666,6 +1666,7 @@ export default function MobilePage() {
           type="button"
           onPointerDown={(event) => {
             event.preventDefault();
+
             event.currentTarget.setPointerCapture(
               event.pointerId
             );
@@ -1724,6 +1725,49 @@ export default function MobilePage() {
           className="h-20 w-20 touch-none rounded-full border-2 border-white/70 bg-white/25 text-sm font-bold"
         >
           Jump
+        </button>
+
+        <button
+          type="button"
+          onPointerDown={(event) => {
+            event.preventDefault();
+
+            event.currentTarget.setPointerCapture(
+              event.pointerId
+            );
+
+            void sendKey(
+              "ctrl",
+              "down"
+            );
+          }}
+          onPointerUp={(event) => {
+            event.preventDefault();
+
+            if (
+              event.currentTarget.hasPointerCapture(
+                event.pointerId
+              )
+            ) {
+              event.currentTarget.releasePointerCapture(
+                event.pointerId
+              );
+            }
+
+            void sendKey(
+              "ctrl",
+              "up"
+            );
+          }}
+          onPointerCancel={() => {
+            void sendKey(
+              "ctrl",
+              "up"
+            );
+          }}
+          className="h-16 w-16 touch-none rounded-full border border-white/60 bg-black/55 text-sm font-semibold"
+        >
+          Ctrl
         </button>
       </div>
 
